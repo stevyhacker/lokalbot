@@ -17,7 +17,7 @@
   <link rel="icon" href="assets/lokalbot-icon.svg" type="image/svg+xml" />
   <link rel="stylesheet" href="styles.css" />
   <link rel="stylesheet" href="icons.css" />
-  <script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"Article","headline":"Record both sides of a Mac meeting without a bot","description":"How LokalBot captures your microphone and meeting-app audio as synchronized tracks on macOS without adding a bot participant.","datePublished":"2026-07-13","dateModified":"2026-07-13","mainEntityOfPage":"https://www.lokalbot.com/record-both-sides-mac-meeting-without-bot","image":"https://www.lokalbot.com/assets/og-image.png","author":{"@type":"Organization","name":"LokalBot project","url":"https://www.lokalbot.com/"},"publisher":{"@type":"Organization","name":"LokalBot project","url":"https://www.lokalbot.com/"}},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://www.lokalbot.com/"},{"@type":"ListItem","position":2,"name":"Guides","item":"https://www.lokalbot.com/guides"},{"@type":"ListItem","position":3,"name":"Record both sides of a Mac meeting without a bot","item":"https://www.lokalbot.com/record-both-sides-mac-meeting-without-bot"}]},{"@type":"FAQPage","mainEntity":[{"@type":"Question","name":"Does LokalBot join Zoom or Google Meet?","acceptedAnswer":{"@type":"Answer","text":"No. It records the selected app's audio locally through macOS rather than joining as a participant."}},{"@type":"Question","name":"Can it identify every speaker?","acceptedAnswer":{"@type":"Answer","text":"It reliably separates your microphone from the remote track. Optional diarization can split remote speakers further, but accuracy depends on the audio."}},{"@type":"Question","name":"Is bot-free recording legal everywhere?","acceptedAnswer":{"@type":"Answer","text":"No recording method is automatically legal everywhere. You are responsible for notice, consent, workplace rules, and local law."}}]}]}</script>
+  <script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"Article","headline":"Record both sides of a Mac meeting without a bot","description":"How LokalBot captures your microphone and meeting-app audio as synchronized tracks on macOS without adding a bot participant.","datePublished":"2026-07-13","dateModified":"2026-09-05","mainEntityOfPage":"https://www.lokalbot.com/record-both-sides-mac-meeting-without-bot","image":"https://www.lokalbot.com/assets/og-image.png","author":{"@type":"Organization","name":"LokalBot project","url":"https://www.lokalbot.com/"},"publisher":{"@type":"Organization","name":"LokalBot project","url":"https://www.lokalbot.com/"}},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://www.lokalbot.com/"},{"@type":"ListItem","position":2,"name":"Guides","item":"https://www.lokalbot.com/guides"},{"@type":"ListItem","position":3,"name":"Record both sides of a Mac meeting without a bot","item":"https://www.lokalbot.com/record-both-sides-mac-meeting-without-bot"}]},{"@type":"FAQPage","mainEntity":[{"@type":"Question","name":"Does LokalBot join Zoom or Google Meet?","acceptedAnswer":{"@type":"Answer","text":"No. It records the selected app's audio locally through macOS rather than joining as a participant."}},{"@type":"Question","name":"Can it identify every speaker?","acceptedAnswer":{"@type":"Answer","text":"It reliably separates your microphone from the remote track. Optional diarization can split remote speakers further, but accuracy depends on the audio."}},{"@type":"Question","name":"Is bot-free recording legal everywhere?","acceptedAnswer":{"@type":"Answer","text":"No recording method is automatically legal everywhere. You are responsible for notice, consent, workplace rules, and local law."}}]}]}</script>
   <script src="app.js" defer></script>
 </head>
 <body>
@@ -26,7 +26,7 @@
   <header class="nav" id="top">
     <a class="brand" href="/" aria-label="LokalBot home"><img class="brand__mark" src="assets/lokalbot-icon.svg" alt="" width="32" height="32" /><span class="brand__name">LokalBot</span></a>
     <nav class="nav__links" aria-label="Primary"><a href="/#features">Features</a><a href="/guides" aria-current="page">Guides</a><a href="/#compare">Compare</a></nav>
-    <div class="nav__actions"><a class="icon-link" href="https://github.com/stevyhacker/lokalbot" aria-label="LokalBot on GitHub" target="_blank" rel="noopener"><i class="ph ph-github-logo" aria-hidden="true"></i></a><a class="btn btn--primary btn--sm" href="https://github.com/stevyhacker/lokalbot/releases" target="_blank" rel="noopener">Download</a></div>
+    <div class="nav__actions"><a class="icon-link" href="https://github.com/stevyhacker/lokalbot" aria-label="LokalBot on GitHub" target="_blank" rel="noopener"><i class="ph ph-github-logo" aria-hidden="true"></i></a><a class="btn btn--primary btn--sm" href="https://github.com/stevyhacker/lokalbot/releases/latest/download/LokalBot.dmg">Download</a></div>
   </header>
 
   <main class="guide-page" id="guide">
@@ -35,7 +35,7 @@
       <p class="eyebrow">Bot-free capture</p>
       <h1>Record both sides of a Mac meeting without a bot</h1>
       <p class="guide-hero__lead">A microphone alone misses the people coming through your speakers. A meeting bot changes the call. macOS process audio provides a third route.</p>
-      <p class="guide-byline"><time datetime="2026-07-13">Updated July 13, 2026</time> · 5 min read</p>
+      <p class="guide-byline"><time datetime="2026-09-05">Updated September 5, 2026</time> · 5 min read</p>
     </header>
 
     <article class="guide-article">
@@ -53,8 +53,8 @@
         <ul>
           <li><strong>Microphone access</strong> captures your side.</li>
           <li><strong>System-audio access</strong> enables the process tap for the other side.</li>
-          <li><strong>Manual recording</strong> is the fresh-install default.</li>
-          <li><strong>Ask-first or automatic modes</strong> can react to supported meeting apps after you enable them.</li>
+          <li><strong>Automatic detection</strong> is selected on a fresh install of v0.7.2, subject to macOS permissions. Review the <a href="system-requirements#capture-defaults">capture defaults</a> before setup.</li>
+          <li><strong>Manual and ask-first modes</strong> are available in recording settings. Upgrades retain saved preferences.</li>
           <li><strong>Calendar access</strong> is optional and can help detect and title scheduled meetings.</li>
         </ul>
 
@@ -112,7 +112,7 @@
         <p class="eyebrow">Try it locally</p>
         <h2 class="section__title">Meeting notes that stay on your Mac by default.</h2>
         <p class="section__lead">Free, open source, and no account. Apple Silicon · macOS 15.0+</p>
-        <a class="btn btn--primary btn--lg" href="https://github.com/stevyhacker/lokalbot/releases" target="_blank" rel="noopener"><i class="ph ph-download-simple" aria-hidden="true"></i>Download for macOS</a>
+        <a class="btn btn--primary btn--lg" href="https://github.com/stevyhacker/lokalbot/releases/latest/download/LokalBot.dmg"><i class="ph ph-download-simple" aria-hidden="true"></i>Download for macOS</a>
       </div>
     </section>
   </main>

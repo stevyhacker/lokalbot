@@ -23,13 +23,13 @@
       <a href="support">Support</a>
     </nav>
     <div class="nav__actions">
-      <a class="btn btn--primary btn--sm" href="https://github.com/stevyhacker/lokalbot/releases" target="_blank" rel="noopener">Download</a>
+      <a class="btn btn--primary btn--sm" href="https://github.com/stevyhacker/lokalbot/releases/latest/download/LokalBot.dmg">Download</a>
     </div>
   </header>
 
   <main class="legal-page">
     <header class="legal-page__head">
-      <p class="eyebrow">Effective July 21, 2026</p>
+      <p class="eyebrow">Updated September 5, 2026</p>
       <h1>Privacy Policy</h1>
       <p>LokalBot is local-first. It has no LokalBot account, analytics service, advertising SDK, telemetry backend, or hosted AI service.</p>
     </header>
@@ -45,7 +45,7 @@
         <li>opt-in Agent Mode sessions and runtime files; and</li>
         <li>preferences, diagnostic logs, and encryption keys.</li>
       </ul>
-      <p>Fresh installs select day tracking with encrypted visual context by default, but collection still requires macOS Accessibility and Screen Recording permission. Screenshots are encrypted at rest and deleted after 14 days by default. Their extracted text follows the same retention unless you explicitly keep it. Dictation scratch audio is deleted after transcription by default.</p>
+      <p>In v0.7.2, fresh installs select day tracking with encrypted visual context, but collection still requires the corresponding macOS permissions. Review capture settings before granting access; you can disable visual context. Upgrades retain saved preferences. Screenshots are encrypted at rest and deleted after 14 days by default. Their extracted text follows the same retention unless you explicitly keep it. Dictation scratch audio is deleted after transcription by default. See the <a href="system-requirements#capture-defaults">release-specific setup guide</a>.</p>
 
       <h2>When LokalBot uses the network</h2>
       <ul>
@@ -58,7 +58,7 @@
 
       <h2>Permissions and consent</h2>
       <p>Microphone and system-audio permissions enable recording. Calendar access helps detect and title meetings and provides local speaker-name suggestions. Attendee emails remain in meeting metadata, are deleted with the meeting, and are never added to transcripts, exports, or model prompts. Accessibility enables browser-meeting detection, Cotyping, dictation insertion, and approved agent interaction. Screen Recording enables visual screen context when selected.</p>
-      <p>Recording defaults to automatic detection on a fresh install. You are responsible for informing participants and obtaining any consent required before recording other people.</p>
+      <p>Version 0.7.2 selects automatic meeting detection on a fresh install; recording still requires macOS permissions. You can change this in recording settings. You are responsible for informing participants and obtaining any consent required before recording other people.</p>
 
       <h2>External-agent access</h2>
       <p>The bundled CLI and MCP interface are read-only and refuse library access until you enable Agent Access under Settings → Privacy. An enabled external tool runs as your macOS user, so connect only tools you trust.</p>
