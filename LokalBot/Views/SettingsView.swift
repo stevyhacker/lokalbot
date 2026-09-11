@@ -43,6 +43,7 @@ struct SettingsView: View {
                 HStack(spacing: 10) {
                     Image(nsImage: NSApp.applicationIconImage)
                         .resizable().frame(width: 30, height: 30)
+                        .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 2) {
                         Text("LokalBot").font(.system(size: 14, weight: .semibold))
                         Text("Private work memory").font(.system(size: 12)).settingsSecondary()
