@@ -126,7 +126,8 @@ class HostedRunnerTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        for name in ["Scripts/ui-tests.sh", "Scripts/ci/ui-build-stamp.py", "Scripts/ci/ui-shards.py", "Scripts/ci/ui-durations.json"]:
+        for name in ["Scripts/ui-tests.sh", "Scripts/ci/ui-build-stamp.py", "Scripts/ci/ui-shards.py",
+                     "Scripts/ci/ui-durations.json", "Scripts/ci/prepare-display.swift"]:
             target = self.root / name
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(SOURCE / name, target)
@@ -162,8 +163,18 @@ sys.exit(int(os.environ.get('FAKE_TEST_EXIT', '0')))
         sdk = fake.with_name('xcrun')
         sdk.write_text('#!/bin/sh\nprintf "%s\\n" "${FAKE_SDK:-test-sdk}"\n')
         sdk.chmod(0o755)
+        display = fake.with_name('swift')
+        display.write_text('''#!/usr/bin/env python3
+import json, os, pathlib, sys
+assert sys.argv[1:] == ['Scripts/ci/prepare-display.swift']
+assert pathlib.Path(sys.argv[1]).is_file()
+with open('.build/invocations.jsonl', 'a') as log:
+    log.write(json.dumps(['swift'] + sys.argv[1:]) + '\\n')
+sys.exit(int(os.environ.get('FAKE_DISPLAY_EXIT', '0')))
+''')
+        display.chmod(0o755)
         self.env = dict(os.environ, PATH=f"{fake.parent}:{os.environ['PATH']}", CI="true",
-                        GITHUB_RUN_ID="fixture", GITHUB_RUN_ATTEMPT="1", GITHUB_JOB="ui",
+                        GITHUB_ACTIONS="true", GITHUB_RUN_ID="fixture", GITHUB_RUN_ATTEMPT="1", GITHUB_JOB="ui",
                         CODE_SIGNING_ALLOWED="NO", GITHUB_STEP_SUMMARY=str(self.root / '.build/summary'))
 
     def git(self, *args):
@@ -196,6 +207,11 @@ sys.exit(int(os.environ.get('FAKE_TEST_EXIT', '0')))
         self.assertEqual(self.run_script('--build-only', FAKE_BUILD_EXIT='71').returncode, 71)
         self.assertNotEqual(self.run_script('--test-only').returncode, 0)
         self.assertFalse(any('test-without-building' in call for call in self.calls()))
+
+    def test_display_failure_stops_before_compilation(self):
+        result = self.run_script('--build-only', FAKE_DISPLAY_EXIT='63')
+        self.assertEqual(result.returncode, 63, result.stdout)
+        self.assertEqual(self.calls(), [['swift', 'Scripts/ci/prepare-display.swift']])
 
     def test_stale_job_toolchain_and_dirty_inputs_are_rejected(self):
         self.build()
