@@ -215,12 +215,14 @@ enum UITestHarness {
         // Prefer the widest scroll view so a split-view sidebar is not moved
         // while the content Form remains stationary.
         let candidates = app.scrollViews.allElementsBoundByIndex
-        let identifier = element.exists ? element.identifier : ""
-        let owner = identifier.isEmpty ? nil : candidates.filter {
-            $0.descendants(matching: .any).matching(identifier: identifier).firstMatch.exists
+        let targetX = element.exists ? element.frame.midX : nil
+        // SwiftUI can expose a sibling's descendants through a ScrollView
+        // query. Use the target's horizontal position to exclude sidebars.
+        let owner = targetX.flatMap { targetX in candidates.filter {
+            $0.frame.minX <= targetX && targetX <= $0.frame.maxX
         }.min {
             $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height
-        }
+        } }
         let scrollArea = owner ?? candidates.max {
             $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height
         } ?? app.groups.firstMatch

@@ -76,8 +76,9 @@ final class DictationSettingsUITests: XCTestCase {
         XCTAssertTrue(apply.isEnabled, "A prepared model should be selectable")
         apply.click()
         XCTAssertTrue(UITestHarness.waitUntil { !apply.exists }, "Applying should close the model picker")
-        XCTAssertTrue(UITestHarness.staticText(containing: "Synthetic dictation model", in: app)
-            .waitForExistence(timeout: 5),
+        XCTAssertTrue(UITestHarness.waitUntil {
+            picker.label.contains("Synthetic dictation model")
+        },
             "Dictation composition card did not render the selected model")
 
         app = try UITestHarness.relaunch(
@@ -91,8 +92,9 @@ final class DictationSettingsUITests: XCTestCase {
         XCTAssertTrue(picker.waitForExistence(timeout: 6),
                       "composition picker missing after relaunch")
         UITestHarness.scrollTo(picker, in: app)
-        XCTAssertTrue(UITestHarness.staticText(containing: "Synthetic dictation model", in: app)
-            .waitForExistence(timeout: 5),
+        XCTAssertTrue(UITestHarness.waitUntil {
+            picker.label.contains("Synthetic dictation model")
+        },
             "dedicated Dictation composition model did not render after relaunch")
     }
 
