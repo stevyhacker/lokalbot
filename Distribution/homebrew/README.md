@@ -4,7 +4,7 @@ This directory contains the Homebrew cask for [LokalBot](https://www.lokalbot.co
 (`lokalbot.rb`) and notes on validating it and shipping it to users.
 
 - Cask token: `lokalbot`
-- Current version packaged here: **0.6.2**
+- Current version packaged here: **0.8.1**
 - Requirements enforced by the cask: Apple Silicon (M1+), macOS 15.0+
 - Style verified against `Homebrew/homebrew-cask` `CONTRIBUTING.md`, the
   [Cask Cookbook stanza order](https://docs.brew.sh/Cask-Cookbook#stanza-order),
