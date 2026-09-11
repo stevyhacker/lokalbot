@@ -50,15 +50,18 @@ final class DictationSettingsUITests: XCTestCase {
     func testEnablingGlobalShortcutRevealsPermissionRepairRows() {
         app.buttons["Writing settings…"].click()
         let toggle = UITestHarness.toggle("Enable dictation shortcut", in: app)
-        UITestHarness.scrollTo(toggle, in: app)
+        UITestHarness.scrollTo(toggle, in: app, within: app.scrollViews["settings.form"])
         XCTAssertTrue(toggle.waitForExistence(timeout: 4))
         toggle.click()
+        XCTAssertTrue(UITestHarness.waitUntil { String(describing: toggle.value ?? "") == "1" },
+                      "The dictation shortcut switch must turn on before leaving settings")
         UITestHarness.clickSidebar("sidebar.type", in: app)
         XCTAssertTrue(formText(containing: "Records your voice for the current dictation").waitForExistence(timeout: 5))
         XCTAssertTrue(formText(containing: "Detects the global dictation shortcut").exists)
         app.buttons["Writing settings…"].click()
-        UITestHarness.scrollTo(toggle, in: app)
+        UITestHarness.scrollTo(toggle, in: app, within: app.scrollViews["settings.form"])
         toggle.click()
+        XCTAssertTrue(UITestHarness.waitUntil { String(describing: toggle.value ?? "") == "0" })
     }
 
     func testDedicatedCompositionModelSelectionPersistsAcrossRelaunch() throws {
