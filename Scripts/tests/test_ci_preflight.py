@@ -137,6 +137,11 @@ class HostedRunnerTests(unittest.TestCase):
         lock.write_text('{}\n')
         (self.root / ".gitignore").write_text('.build/\n')
         self.git("init", "-q")
+        # Short failure-path tests can finish while Git's background helpers
+        # still touch .git, racing TemporaryDirectory cleanup on hosted Macs.
+        self.git("config", "maintenance.auto", "false")
+        self.git("config", "gc.auto", "0")
+        self.git("config", "core.fsmonitor", "false")
         self.git("add", ".")
         self.git("-c", "user.name=CI Test", "-c", "user.email=ci@example.invalid",
                  "-c", "commit.gpgsign=false", "commit", "-qm", "fixture")
