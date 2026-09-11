@@ -359,12 +359,15 @@ private struct SidebarPrivacyFooter: View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 6) {
                 StatusDot(color: destination == .onDevice ? Brand.teal : Brand.amber, size: 7)
-                Text("Memory stored on this Mac")
+                Text("Storage: this Mac")
                     .font(WorkspaceTypography.editorialBodyEmphasis)
                     .foregroundStyle(.primary)
             }
-            Text(destination.label)
+            Text(processingLabel)
                 .workspaceTextRole(.supporting)
+            if case .remote(let host) = destination {
+                Text(host).workspaceTextRole(.metadata)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.leading, 20)
@@ -374,6 +377,14 @@ private struct SidebarPrivacyFooter: View {
         .overlay(alignment: .top) { Divider() }
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("sidebar.localPrivacy")
+    }
+
+    private var processingLabel: String {
+        switch destination {
+        case .onDevice: "AI: on this Mac"
+        case .remote: "AI: local + remote"
+        case .blocked: "AI: connection blocked"
+        }
     }
 }
 

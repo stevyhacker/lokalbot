@@ -2,7 +2,7 @@ import SwiftUI
 import AppKit
 
 /// The Models tab of Settings (spec §2.5). The core model overview owns the
-/// per-role Change buttons and expands each role's configuration in place;
+/// per-role Configure buttons and expands each role's configuration in place;
 /// supporting model controls remain directly available below. Downloads come
 /// from the local catalog or Hugging Face.
 struct ModelsView: View {
@@ -28,18 +28,26 @@ struct ModelsView: View {
     @State private var openAIAPIKeySavedValue = ""
     @State private var didLoadOpenAIAPIKey = false
     @State private var openAIAPIKeySaved = false
+    @State private var editingOpenAIAPIKey = false
+    @State private var apiKeySaveError: String?
     @State private var expandedRoles: Set<ModelRole> = []
+    @State private var modelTestResults: [ModelRole: ModelTestResult] = [:]
+    @State private var smokeTesting = false
     @State private var confirmingOpenRouterAccountPolicy = false
 
     var body: some View {
         ScrollViewReader { proxy in
         ScrollView {
             VStack(alignment: .leading, spacing: WorkspaceMetric.sectionGap) {
-                ModelStackOverviewView(expandedRoles: $expandedRoles) {
-                    VStack(alignment: .leading, spacing: 16) {
-                        if expandedRoles.contains(.transcribe) { transcriptionCard.settingTarget("settings.transcriptionModel", selected: app.focusedSettingID) }
-                        if expandedRoles.contains(.think) { summarizationCard }
-                        if expandedRoles.contains(.autocomplete) { cotypingCard.settingTarget("settings.cotypingBuiltInModelID", selected: app.focusedSettingID) }
+                ModelStackOverviewView(expandedRoles: $expandedRoles, testResults: $modelTestResults,
+                                       smokeTesting: $smokeTesting, generationTesting: testing) { role in
+                    switch role {
+                    case .transcribe:
+                        transcriptionCard.settingTarget("settings.transcriptionModel", selected: app.focusedSettingID)
+                    case .think:
+                        summarizationCard
+                    case .autocomplete:
+                        cotypingCard.settingTarget("settings.cotypingBuiltInModelID", selected: app.focusedSettingID)
                     }
                 }
                 ModelMemoryBanner()
@@ -48,7 +56,7 @@ struct ModelsView: View {
                 embeddingsCard
             }
             .padding(WorkspaceMetric.pagePadding)
-            .frame(maxWidth: WorkspaceMetric.contentMaxWidth, alignment: .leading)
+            .frame(maxWidth: 1000, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
         .onChange(of: app.focusedSettingID, initial: true) {
@@ -75,6 +83,12 @@ struct ModelsView: View {
                 openAIAPIKeySavedValue = savedKey
                 didLoadOpenAIAPIKey = true
             }
+        }
+        .onChange(of: app.settings) {
+            modelTestResults = [:]
+            testResult = nil
+            testFailure = nil
+            showingTestFailure = false
         }
         .sheet(isPresented: $showingHFBrowse) { huggingFaceBrowser }
         .sheet(isPresented: $showingGraniteModelPicker) {
@@ -118,9 +132,7 @@ struct ModelsView: View {
     }
 
     private var transcriptionCard: some View {
-        ModelCard(icon: "waveform", title: "Transcription",
-                  subtitle: "Speech → text for meeting audio",
-                  cardIdentifier: "models.transcription") {
+        VStack(alignment: .leading, spacing: 12) {
             ForEach(visibleTranscriptionChoices) { choice in
                 let status = app.modelRoles.transcriptionStatus(for: choice)
                 TranscriptionModelRow(
@@ -166,6 +178,8 @@ struct ModelsView: View {
             Text("Runs fully on-device with Core ML, MLX, ONNX, or llama.cpp. Models fetch from Hugging Face on first use — or use Download to cache and warm one up.")
                 .font(.caption).foregroundStyle(.secondary)
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("models.transcription")
     }
 
     /// Legacy choices are hidden unless this install already uses them
@@ -206,9 +220,8 @@ struct ModelsView: View {
     }
 
     private var summarizationCard: some View {
-        ModelCard(icon: "brain", title: "Main LLM engine",
-                  subtitle: "Used for questions, meeting summaries, and Agent Mode") {
-            Picker("Backend", selection: $app.settings.summarizerBackend) {
+        VStack(alignment: .leading, spacing: 16) {
+            Picker("Provider", selection: $app.settings.summarizerBackend) {
                 ForEach(AppSettings.SummarizerBackend.allCases) { backend in
                     Text(backend.displayName).tag(backend)
                 }
@@ -244,9 +257,10 @@ struct ModelsView: View {
                 Text("Uses Apple Intelligence (macOS 26+). No model download; nothing leaves your Mac.")
                     .font(.caption).foregroundStyle(.secondary)
             case .ollama:
-                TextField("Server", text: $app.settings.ollamaBaseURL)
-                    .textFieldStyle(.roundedBorder)
-                    .settingTarget("settings.ollamaBaseURL", selected: app.focusedSettingID)
+                modelField("Server URL") {
+                    TextField("Server URL", text: $app.settings.ollamaBaseURL)
+                        .settingTarget("settings.ollamaBaseURL", selected: app.focusedSettingID)
+                }
                 remoteEndpointDisclosure(rawURL: app.settings.ollamaBaseURL)
                 LabeledContent("Status") {
                     HStack(spacing: 6) {
@@ -266,38 +280,27 @@ struct ModelsView: View {
                     }
                 }
             case .openAICompatible:
-                TextField("Base URL (…/v1)", text: $app.settings.openAIBaseURL)
-                    .textFieldStyle(.roundedBorder)
-                    .settingTarget("settings.openAIBaseURL", selected: app.focusedSettingID)
-                TextField("Model name", text: $app.settings.openAIModel)
-                    .textFieldStyle(.roundedBorder)
-                    .settingTarget("settings.openAIModel", selected: app.focusedSettingID)
-                HStack(spacing: 8) {
-                    SecureField("API key (optional)", text: $openAIAPIKeyDraft)
-                        .onChange(of: openAIAPIKeyDraft) { _, _ in
-                            openAIAPIKeySaved = false
-                        }
-                    Button(openAIAPIKeySaved ? "Saved" : "Save key") {
-                        app.settings.openAIAPIKey = openAIAPIKeyDraft
-                        openAIAPIKeySavedValue = openAIAPIKeyDraft
-                        openAIAPIKeySaved = true
-                    }
-                    .disabled(openAIAPIKeyDraft == openAIAPIKeySavedValue)
+                modelField("Server URL") {
+                    TextField("https://example.com/v1", text: $app.settings.openAIBaseURL)
+                        .accessibilityLabel("Server URL")
+                        .accessibilityIdentifier("models.serverURL")
+                        .settingTarget("settings.openAIBaseURL", selected: app.focusedSettingID)
                 }
-                Text("The key is written to Keychain only when you choose Save key.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                modelField("Model ID") {
+                    TextField("Provider model identifier", text: $app.settings.openAIModel)
+                        .accessibilityLabel("Model ID")
+                        .accessibilityIdentifier("models.modelID")
+                        .settingTarget("settings.openAIModel", selected: app.focusedSettingID)
+                }
+                apiKeyControl
                 remoteEndpointDisclosure(rawURL: app.settings.openAIBaseURL)
-                if isOpenRouterEndpoint {
-                    openRouterDataPolicyControl
-                }
             }
 
             HStack(spacing: 8) {
                 Button(testing ? "Testing…" : "Test generation") {
                     Task { await testGeneration() }
                 }
-                .disabled(testing)
+                .disabled(testing || smokeTesting)
                 .accessibilityIdentifier("models.generationTest")
                 .popover(isPresented: $showingTestFailure, arrowEdge: .bottom) {
                     if let testFailure {
@@ -305,7 +308,7 @@ struct ModelsView: View {
                     }
                 }
                 if let testResult {
-                    Text(testResult).font(.caption).foregroundStyle(.secondary)
+                    Text(testResult).font(WorkspaceTypography.metadata).foregroundStyle(.secondary)
                         .lineLimit(2)
                 }
                 if let testFailure {
@@ -323,7 +326,65 @@ struct ModelsView: View {
                 }
             }
         }
+        .controlSize(.regular)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("models.summarization")
+    }
+
+    private func modelField<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).font(WorkspaceTypography.control)
+            content().textFieldStyle(.roundedBorder)
+        }
+    }
+
+    private var apiKeyControl: some View {
+        modelField("API key") {
+            if !openAIAPIKeySavedValue.isEmpty && !editingOpenAIAPIKey {
+                HStack {
+                    Label("Saved in Keychain", systemImage: "key")
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Replace…") {
+                        openAIAPIKeyDraft = ""
+                        apiKeySaveError = nil
+                        editingOpenAIAPIKey = true
+                    }
+                    .accessibilityIdentifier("models.apiKey.replace")
+                }
+            } else {
+                HStack(spacing: 8) {
+                    SecureField("API key (optional)", text: $openAIAPIKeyDraft)
+                        .accessibilityIdentifier("models.apiKey")
+                        .onChange(of: openAIAPIKeyDraft) { openAIAPIKeySaved = false }
+                    Button("Save key") {
+                        app.settings.openAIAPIKey = openAIAPIKeyDraft
+                        // Only acknowledge persistence after reading back from Keychain.
+                        openAIAPIKeySavedValue = app.settings.openAIAPIKey
+                        openAIAPIKeySaved = openAIAPIKeySavedValue == openAIAPIKeyDraft
+                        if openAIAPIKeySaved { editingOpenAIAPIKey = false }
+                        apiKeySaveError = openAIAPIKeySaved ? nil : "Couldn’t save the key to Keychain. Try again."
+                        modelTestResults = [:]
+                        testResult = nil
+                        testFailure = nil
+                    }
+                    .disabled(openAIAPIKeyDraft == openAIAPIKeySavedValue)
+                    .accessibilityIdentifier("models.apiKey.save")
+                    if editingOpenAIAPIKey {
+                        Button("Cancel") {
+                            openAIAPIKeyDraft = openAIAPIKeySavedValue
+                            editingOpenAIAPIKey = false
+                            apiKeySaveError = nil
+                        }
+                    }
+                }
+                Text("Stored in Keychain only when you choose Save key. Leave empty for a server that needs no key.")
+                    .workspaceTextRole(.supporting)
+            }
+            if let apiKeySaveError {
+                Text(apiKeySaveError).workspaceTextRole(.warning)
+            }
+        }
     }
 
     private var dictationCompositionCard: some View {
@@ -372,29 +433,35 @@ struct ModelsView: View {
             if url.scheme?.lowercased() != "https" {
                 Label("Blocked: remote inference must use HTTPS so transcripts and screen text are encrypted in transit.",
                       systemImage: "lock.slash.fill")
-                    .font(.caption)
-                    .foregroundStyle(.red)
-                    .padding(8)
+                    .workspaceTextRole(.warning)
+                    .padding(14)
                     .background(.red.opacity(0.08),
                                 in: RoundedRectangle(cornerRadius: Brand.Radius.row))
             } else {
-                VStack(alignment: .leading, spacing: 6) {
-                    Label("Remote server: meeting transcripts, screen text, and agent context may leave this Mac.",
-                          systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption)
-                        .foregroundStyle(Brand.error)
-                    Toggle("Allow sending inference context to \(origin)",
+                VStack(alignment: .leading, spacing: 12) {
+                    Label("Data sent to \(url.host ?? origin)", systemImage: "network")
+                        .font(WorkspaceTypography.rowTitle)
+                    Text("Think may send meeting transcripts, screen text, and Agent context to this server when you use those features.")
+                        .workspaceTextRole(.trust)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Toggle("Allow sending context to \(origin)",
                            isOn: remoteApprovalBinding(rawURL: rawURL))
-                        .font(.caption)
+                        .font(WorkspaceTypography.editorialBody)
+                        .accessibilityIdentifier("models.remoteConsent")
+                    if app.settings.summarizerBackend == .openAICompatible && isOpenRouterEndpoint {
+                        Divider()
+                        openRouterDataPolicyControl
+                    }
                 }
-                .padding(8)
-                .background(.orange.opacity(0.08),
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.quaternary.opacity(0.3),
                             in: RoundedRectangle(cornerRadius: Brand.Radius.row))
             }
         } else if let url = URL(string: rawURL), InferenceEndpointPolicy.isLoopback(url) {
             Label("Loopback server: inference context stays on this Mac.",
                   systemImage: "checkmark.shield.fill")
-                .font(.caption)
+                .font(WorkspaceTypography.editorialBody)
                 .foregroundStyle(.secondary)
         }
     }
@@ -422,7 +489,7 @@ struct ModelsView: View {
     private var openRouterDataPolicyControl: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Provider data use")
-                .font(.caption.weight(.semibold))
+                .font(WorkspaceTypography.control)
             Picker("Provider data use", selection: openRouterDataPolicyBinding) {
                 Text("Private endpoints only (Recommended)")
                     .tag(OpenRouterDataPolicy.privateOnly)
@@ -434,8 +501,7 @@ struct ModelsView: View {
             .accessibilityIdentifier("models.openRouterDataPolicy")
 
             Text(openRouterDataPolicyDetail)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .workspaceTextRole(.supporting)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .alert(
@@ -541,8 +607,7 @@ struct ModelsView: View {
     }
 
     private var cotypingCard: some View {
-        ModelCard(icon: "text.cursor", title: "Autocomplete",
-                  subtitle: "Inline AI autocomplete as you type") {
+        VStack(alignment: .leading, spacing: 12) {
             CotypingModelPreparationView(compact: true)
             Picker("Autocomplete model", selection: $app.settings.cotypingBuiltInModelID) {
                 ForEach(ModelCatalog.keystrokeScaleEntries(
@@ -552,9 +617,10 @@ struct ModelsView: View {
                 }
             }
             .frame(maxWidth: 360)
-            Text("Autocomplete runs in its own local model process, separate from the Main LLM. LFM2.5 1.2B is the benchmarked low-latency default.")
+            Text("Autocomplete runs on this Mac using its own model, independently of Think.")
                 .font(.caption).foregroundStyle(.secondary)
         }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("models.cotyping")
     }
 
@@ -900,6 +966,8 @@ struct ModelsView: View {
     }
 
     func testGeneration() async {
+        let config = app.settings
+        let savedKey = config.openAIAPIKey
         testing = true
         testResult = nil
         testFailure = nil
@@ -907,15 +975,19 @@ struct ModelsView: View {
         defer { testing = false }
         do {
             let engine = try await app.thinkExecution.makeTextEngine(
-                app.settings,
+                config,
                 priority: .interactive,
                 purpose: "model test")
             let reply = try await engine.generate(
                 system: PromptTemplates.connectivityTestSystem,
                 prompt: PromptTemplates.connectivityTestPrompt,
                 context: [])
-            testResult = "✓ " + reply.prefix(120)
+            guard config == app.settings, savedKey == app.settings.openAIAPIKey else { return }
+            modelTestResults[.think] = .passed(Date())
+            testResult = "Test passed · " + reply.prefix(120)
         } catch {
+            guard config == app.settings, savedKey == app.settings.openAIAPIKey else { return }
+            modelTestResults[.think] = .failed(error.localizedDescription)
             let isOpenAICompatible = app.settings.summarizerBackend == .openAICompatible
             testFailure = GenerationTestFailurePresentation(
                 error: error,

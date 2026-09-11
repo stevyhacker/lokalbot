@@ -265,12 +265,9 @@ final class MainWindowUITests: XCTestCase {
             XCTAssertLessThan(pair.0.frame.midY, pair.1.frame.midY,
                               "approved sidebar order changed")
         }
-        // The footer is state-aware: these strings are the local-default
-        // posture (test host uses built-in Think). With an approved remote
-        // backend it switches to the "Think uses an approved remote server"
-        // wording — covered by AppSettingsTests.usesRemoteMainLLM.
-        XCTAssertTrue(textWithContent("Memory stored on this Mac").firstMatch.exists)
-        XCTAssertTrue(textWithContent("On this Mac").firstMatch.exists)
+        // Storage and inference destinations remain separate claims.
+        XCTAssertTrue(textWithContent("Storage: this Mac").firstMatch.exists)
+        XCTAssertTrue(textWithContent("AI: on this Mac").firstMatch.exists)
     }
 
     /// The Models tab of Settings (spec §2.5) renders its role cards —
@@ -293,16 +290,24 @@ final class MainWindowUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["models.embeddings"].exists,
                       "embeddings model card identifier missing")
 
-        for (change, card) in [("models.stack.change.transcribe", "models.transcription"),
-                               ("models.stack.change.think", "models.summarization"),
-                               ("models.stack.change.type", "models.cotyping")] {
+        for (change, card, role) in [("models.stack.change.transcribe", "models.transcription", "transcribe"),
+                                     ("models.stack.change.think", "models.summarization", "think"),
+                                     ("models.stack.change.type", "models.cotyping", "autocomplete")] {
             let button = app.buttons[change]
             XCTAssertTrue(button.waitForExistence(timeout: 4), "\(change) button missing")
+            XCTAssertEqual(button.label, "Configure…")
             UITestHarness.scrollTo(button, in: app)
             button.click()
             XCTAssertTrue(app.descendants(matching: .any)[card]
                 .waitForExistence(timeout: 4),
-                          "\(card) did not expand from its Change button")
+                          "\(card) did not expand from its Configure button")
+            let done = app.buttons["models.stack.done.\(role)"]
+            UITestHarness.scrollTo(done, in: app)
+            XCTAssertTrue(done.isHittable, "Inline editor must have a reachable Done button")
+            done.click()
+            XCTAssertTrue(UITestHarness.waitUntil {
+                !self.app.descendants(matching: .any)[card].exists
+            }, "Done should collapse only this role's editor")
         }
     }
 

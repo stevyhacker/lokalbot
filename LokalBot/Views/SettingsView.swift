@@ -36,8 +36,10 @@ struct SettingsView: View {
             .accessibilityLabel("Settings navigation")
             .splitPaneAccessibilityLabel("Settings navigation")
             VStack(alignment: .leading, spacing: 0) {
-                settingsHeaderTitle.padding(20)
-                Divider()
+                if !queryIsEmpty || app.settingsTab != .models {
+                    settingsHeaderTitle.padding(20)
+                    Divider()
+                }
                 if !queryIsEmpty {
                     searchResults
                 } else if app.settingsTab == .models {

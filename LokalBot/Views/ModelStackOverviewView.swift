@@ -1,22 +1,57 @@
 import SwiftUI
 
+/// A test result is separate from model availability and is cleared when settings change.
+enum ModelTestResult {
+    case passed(Date)
+    case failed(String)
+
+    var label: String {
+        switch self {
+        case .passed(let date): "Test passed · " + date.formatted(date: .omitted, time: .shortened)
+        case .failed(let message): "Test failed: \(message)"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .passed: "checkmark.circle.fill"
+        case .failed: "exclamationmark.triangle"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .passed: .green
+        case .failed: .orange
+        }
+    }
+}
+
 struct ModelStackOverviewView<Configuration: View>: View {
     @EnvironmentObject var app: AppState
 
     @Binding private var expandedRoles: Set<ModelRole>
-    private let configuration: Configuration
+    @Binding private var testResults: [ModelRole: ModelTestResult]
+    private let configuration: (ModelRole) -> Configuration
 
     @State private var pendingPreset: ModelStackPreset?
-    @State private var smokeTesting = false
+    @Binding private var smokeTesting: Bool
+    private let generationTesting: Bool
     @State private var smokeTask: Task<Void, Never>?
-    @State private var smokeResults: [String: String] = [:]
+    @State private var testingRole: ModelRole?
 
     init(
         expandedRoles: Binding<Set<ModelRole>>,
-        @ViewBuilder configuration: () -> Configuration
+        testResults: Binding<[ModelRole: ModelTestResult]>,
+        smokeTesting: Binding<Bool>,
+        generationTesting: Bool,
+        @ViewBuilder configuration: @escaping (ModelRole) -> Configuration
     ) {
         _expandedRoles = expandedRoles
-        self.configuration = configuration()
+        _testResults = testResults
+        _smokeTesting = smokeTesting
+        self.generationTesting = generationTesting
+        self.configuration = configuration
     }
 
     private var autocompleteEntry: ModelCatalog.Entry? {
@@ -46,19 +81,13 @@ struct ModelStackOverviewView<Configuration: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             readinessBanner
-            InferenceDisclosure(settings: app.settings,
-                localText: "Tests use a synthetic audio tone and a fixed prompt on this Mac. Ready means available; Passed is a separate test result.",
-                remoteText: "The test sends a fixed synthetic prompt to your approved server. It does not include private content. Ready and Passed are separate states.")
             coreStack
-            if !expandedRoles.isEmpty {
-                configuration
-            }
             presets
             storage
         }
         .onChange(of: app.settings) {
             smokeTask?.cancel()
-            smokeResults = [:]
+            testResults = [:]
         }
         .onDisappear { smokeTask?.cancel() }
         .confirmationDialog(
@@ -78,115 +107,158 @@ struct ModelStackOverviewView<Configuration: View>: View {
     }
 
     private var readinessBanner: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 16) {
-                readinessSummary.frame(minWidth: 300)
-                Spacer()
-                testControls.fixedSize()
+        VStack(alignment: .leading, spacing: 12) {
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: 16) {
+                    pageTitle
+                    Spacer(minLength: 16)
+                    testControls.fixedSize()
+                }
+                VStack(alignment: .leading, spacing: 12) {
+                    pageTitle
+                    testControls
+                }
             }
-            VStack(alignment: .leading, spacing: 12) {
-                readinessSummary
-                testControls
-            }
+            Text(testDisclosure)
+                .workspaceTextRole(.supporting)
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .workspacePanel()
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("models.readiness")
     }
 
-    private var readinessSummary: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: readinessIcon)
-                .font(.title2)
-                .foregroundStyle(readinessColor)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(snapshot.meetingReady ? "Meeting models ready" : snapshot.headline)
-                    .font(WorkspaceTypography.sectionTitle)
-                Text(snapshot.detail)
-                    .font(WorkspaceTypography.body).foregroundStyle(.secondary)
-            }
+    private var pageTitle: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Models").font(WorkspaceTypography.pageTitle)
+            Text("Choose how LokalBot transcribes, thinks, and completes text.")
+                .font(WorkspaceTypography.body).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
+    }
+
+    private var testDisclosure: String {
+        InferencePresentation(settings: app.settings).detail(
+            local: "Tests use sample audio and text on this Mac. No private content is used.",
+            remote: "Tests use sample content only. Think sends a test prompt to your approved server.")
     }
 
     private var testControls: some View {
         HStack {
-            Button(smokeTesting ? "Testing..." : "Test configured models") {
+            Button(smokeTesting ? "Testing…" : "Test models") {
                 smokeTask = Task { await runSmokeTests() }
             }
-            .buttonStyle(.borderedProminent)
-            .disabled(smokeTesting || !snapshot.meetingReady)
+            .buttonStyle(.bordered)
+            .controlSize(.regular)
+            .disabled(smokeTesting || generationTesting || !snapshot.meetingReady)
+            .accessibilityIdentifier("models.testAll")
             if smokeTesting { Button("Cancel test") { smokeTask?.cancel() } }
         }
     }
 
     private var coreStack: some View {
-        WorkspaceSection(title: "Core roles", icon: "square.stack.3d.up") {
-            coreRow(
-                icon: "waveform",
-                stackRole: .transcribe,
-                role: "Transcribe",
-                model: app.settings.transcriptionModelDisplayName,
-                detail: "Meeting audio to cited transcript",
-                status: snapshot[.transcribe],
-                result: smokeResults["Transcribe"])
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Core roles")
+                .font(WorkspaceTypography.sectionTitle)
+                .padding(.bottom, 8)
+            coreRow(icon: "waveform", role: .transcribe, title: "Transcribe",
+                    model: app.settings.transcriptionModelDisplayName,
+                    detail: "Meeting audio to transcript")
             Divider()
-            coreRow(
-                icon: "brain",
-                stackRole: .think,
-                role: "Think",
-                model: app.settings.thinkModelDisplayName,
-                detail: "Summaries, Ask, outcomes, and Agent",
-                status: snapshot[.think],
-                result: smokeResults["Think"])
+            coreRow(icon: "brain", role: .think, title: "Think",
+                    model: app.settings.thinkModelDisplayName,
+                    detail: "Summaries, Ask, and Agent")
             Divider()
-            coreRow(
-                icon: "text.cursor",
-                stackRole: .autocomplete,
-                role: "Autocomplete",
-                model: autocompleteEntry?.displayName ?? "LFM2.5 1.2B Instruct",
-                detail: "Low-latency writing completion",
-                status: snapshot[.autocomplete],
-                result: smokeResults["Autocomplete"])
+            coreRow(icon: "text.cursor", role: .autocomplete, title: "Autocomplete",
+                    model: autocompleteEntry?.displayName ?? "LFM2.5 1.2B Instruct",
+                    detail: "Suggestions as you type")
         }
+        .workspacePanel()
     }
 
-    private func coreRow(icon: String, stackRole: ModelRole, role: String,
-                         model: String, detail: String, status: ModelRoleStatus,
-                         result: String?) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 12) {
-                Image(systemName: icon).foregroundStyle(Brand.teal).frame(width: 22)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(role).font(WorkspaceTypography.rowTitle)
-                    Text(detail).font(WorkspaceTypography.metadata).foregroundStyle(.secondary)
+    private func coreRow(icon: String, role: ModelRole, title: String,
+                         model: String, detail: String) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 20) {
+                    roleHeading(icon: icon, title: title, detail: detail)
+                        .frame(width: 200, alignment: .leading)
+                    modelSummary(role: role, model: model)
+                        .frame(minWidth: 190, maxWidth: .infinity, alignment: .leading)
+                    configureButton(role)
                 }
-                Spacer()
-                Button(expandedRoles.contains(stackRole) ? "Done" : "Change…") {
-                    toggle(stackRole)
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 12) {
+                        roleHeading(icon: icon, title: title, detail: detail)
+                        Spacer(minLength: 8)
+                        configureButton(role)
+                    }
+                    modelSummary(role: role, model: model).padding(.leading, 34)
                 }
-                .controlSize(.small)
-                .accessibilityIdentifier(changeButtonIdentifier(for: stackRole))
             }
+            if expandedRoles.contains(role) {
+                VStack(alignment: .leading, spacing: 16) {
+                    Divider()
+                    configuration(role)
+                    HStack {
+                        Spacer()
+                        Button("Done") { expandedRoles.remove(role) }
+                            .controlSize(.regular)
+                            .accessibilityIdentifier("models.stack.done.\(role.rawValue)")
+                    }
+                }
+            }
+        }
+        .padding(.vertical, 14)
+    }
+
+    private func roleHeading(icon: String, title: String, detail: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: icon).foregroundStyle(.secondary).frame(width: 22)
+                .font(.system(size: 16))
+                .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 3) {
-                Text(model).font(WorkspaceTypography.bodyEmphasis)
+                Text(title).font(WorkspaceTypography.rowTitle)
+                Text(detail).font(WorkspaceTypography.metadata).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                HStack(spacing: 5) {
-                    StatusDot(color: roleColor(status), size: 7)
-                    Text(result ?? status.label)
-                        .font(WorkspaceTypography.metadata).foregroundStyle(.secondary)
-                }
             }
-            .padding(.leading, 34)
         }
-        .padding(.vertical, 8)
     }
 
-    private func toggle(_ role: ModelRole) {
-        if expandedRoles.contains(role) {
-            expandedRoles.remove(role)
-        } else {
-            expandedRoles.insert(role)
+    private func modelSummary(role: ModelRole, model: String) -> some View {
+        let status = snapshot[role]
+        let result = status.isReady ? testResults[role] : nil
+        let destination = role == .think ? InferencePresentation(settings: app.settings) : .onDevice
+        return VStack(alignment: .leading, spacing: 4) {
+            Text(model).font(WorkspaceTypography.bodyEmphasis)
+                .fixedSize(horizontal: false, vertical: true)
+            Label(destination.label, systemImage: destination.icon)
+                .font(WorkspaceTypography.metadata)
+                .foregroundStyle(destination.isBlocked ? Color.orange : Color.secondary)
+            Label {
+                Text(testingRole == role ? "Testing…" : result?.label ?? (status.isReady ? "Configured · Not tested" : status.label))
+                    .fixedSize(horizontal: false, vertical: true)
+            } icon: {
+                Image(systemName: result?.icon ?? (status.isReady ? "circle.dotted" : "exclamationmark.circle"))
+            }
+            .font(WorkspaceTypography.metadata)
+            .foregroundStyle(testingRole == role ? Color.secondary : result?.color ?? (status.isReady ? .secondary : .orange))
+            .accessibilityIdentifier("models.stack.status.\(role.rawValue)")
         }
+    }
+
+    private func configureButton(_ role: ModelRole) -> some View {
+        Button(expandedRoles.contains(role) ? "Hide settings" : "Configure…") {
+            if expandedRoles.contains(role) {
+                expandedRoles.remove(role)
+            } else {
+                expandedRoles.insert(role)
+            }
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.regular)
+        .fixedSize()
+        .accessibilityIdentifier(changeButtonIdentifier(for: role))
+        .accessibilityValue(expandedRoles.contains(role) ? "Expanded" : "Collapsed")
     }
 
     private func changeButtonIdentifier(for role: ModelRole) -> String {
@@ -258,37 +330,14 @@ struct ModelStackOverviewView<Configuration: View>: View {
         app.modelRoles.startCoreModelDownloads()
     }
 
-    private var readinessIcon: String {
-        switch snapshot.primaryActionStatus {
-        case .ready: "checkmark.seal.fill"
-        case .needsAttention: "exclamationmark.triangle.fill"
-        case .downloading, .preparing: "arrow.down.circle.fill"
-        case .unavailable: "arrow.down.circle"
-        }
-    }
-
-    private var readinessColor: Color {
-        switch snapshot.primaryActionStatus {
-        case .ready: .green
-        case .needsAttention: Brand.error
-        case .downloading, .preparing, .unavailable: Brand.teal
-        }
-    }
-
-    private func roleColor(_ status: ModelRoleStatus) -> Color {
-        switch status {
-        case .ready: .green
-        case .needsAttention: Brand.error
-        case .downloading, .preparing, .unavailable: .orange
-        }
-    }
-
     private func runSmokeTests() async {
         let config = app.settings
+        let savedKey = config.openAIAPIKey
         smokeTesting = true
-        smokeResults = [:]
-        defer { smokeTesting = false }
+        testResults = [:]
+        defer { smokeTesting = false; testingRole = nil }
 
+        testingRole = .transcribe
         do {
             let fixture = FileManager.default.temporaryDirectory
                 .appendingPathComponent("lokalbot-model-smoke-\(UUID().uuidString).wav")
@@ -299,36 +348,41 @@ struct ModelStackOverviewView<Configuration: View>: View {
             try OnnxTranscriptionEngine.writeWav(samples, to: fixture)
             let engine = config.transcriptionEngine()
             try await engine.prepare()
+            try Task.checkCancellation()
             _ = try await engine.transcribe(audio: fixture, language: nil)
-            guard !Task.isCancelled, config == app.settings else { return }
-            smokeResults["Transcribe"] = "Passed · " + Date().formatted(date: .omitted, time: .shortened)
+            guard !Task.isCancelled, config == app.settings, savedKey == app.settings.openAIAPIKey else { return }
+            testResults[.transcribe] = .passed(Date())
         } catch {
-            guard !Task.isCancelled, config == app.settings else { return }
-            smokeResults["Transcribe"] = "Failed: \(error.localizedDescription)"
+            guard !Task.isCancelled, config == app.settings, savedKey == app.settings.openAIAPIKey else { return }
+            testResults[.transcribe] = .failed(error.localizedDescription)
         }
 
+        guard !Task.isCancelled, config == app.settings, savedKey == app.settings.openAIAPIKey else { return }
+        testingRole = .think
         do {
             let engine = try await app.thinkExecution.makeTextEngine(
                 config, priority: .interactive, purpose: "model stack smoke test")
+            try Task.checkCancellation()
             _ = try await engine.generate(
                 system: PromptTemplates.connectivityTestSystem,
                 prompt: PromptTemplates.connectivityTestPrompt,
                 context: [])
-            guard !Task.isCancelled, config == app.settings else { return }
-            smokeResults["Think"] = "Passed · " + Date().formatted(date: .omitted, time: .shortened)
+            guard !Task.isCancelled, config == app.settings, savedKey == app.settings.openAIAPIKey else { return }
+            testResults[.think] = .passed(Date())
         } catch {
-            guard !Task.isCancelled, config == app.settings else { return }
-            smokeResults["Think"] = "Failed: \(error.localizedDescription)"
+            guard !Task.isCancelled, config == app.settings, savedKey == app.settings.openAIAPIKey else { return }
+            testResults[.think] = .failed(error.localizedDescription)
         }
-        guard snapshot[.autocomplete].isReady else { return }
+        guard !Task.isCancelled, config == app.settings, savedKey == app.settings.openAIAPIKey, snapshot[.autocomplete].isReady else { return }
+        testingRole = .autocomplete
         do {
             _ = try await app.cotyping.previewSuggestion(
                 precedingText: "The local model stack is")
-            guard !Task.isCancelled, config == app.settings else { return }
-            smokeResults["Autocomplete"] = "Passed · " + Date().formatted(date: .omitted, time: .shortened)
+            guard !Task.isCancelled, config == app.settings, savedKey == app.settings.openAIAPIKey else { return }
+            testResults[.autocomplete] = .passed(Date())
         } catch {
-            guard !Task.isCancelled, config == app.settings else { return }
-            smokeResults["Autocomplete"] = "Failed: \(error.localizedDescription)"
+            guard !Task.isCancelled, config == app.settings, savedKey == app.settings.openAIAPIKey else { return }
+            testResults[.autocomplete] = .failed(error.localizedDescription)
         }
     }
 }
