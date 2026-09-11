@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="Assets/lokalbot-icon.svg" width="110" alt="LokalBot icon" />
+<img src="web/assets/lokalbot-icon.svg" width="110" alt="LokalBot icon" />
 
 # LokalBot
 
@@ -18,9 +18,9 @@ No account. No telemetry. No LokalBot cloud. [Verify the local path yourself](#p
 ![macOS 15.0+](https://img.shields.io/badge/macOS-15.0%2B-000000?logo=apple&logoColor=white)
 [![License: GPLv3](https://img.shields.io/badge/license-GPLv3-2ea043)](LICENSE)
 
-<video src="https://github.com/user-attachments/assets/6764ed3b-df44-45fd-8569-13c440091aec" controls title="LokalBot 30-second feature demo: bot-free meeting capture, cited recall, local dictation and autocomplete, daily summaries, and privacy by default"></video>
+<video src="https://github.com/user-attachments/assets/6764ed3b-df44-45fd-8569-13c440091aec" controls title="LokalBot 30-second feature demo: cited recall, bot-free meeting capture, local Dictation and Autocomplete, and verifiable local processing"></video>
 
-<sub><strong>30-second feature demo with voiceover</strong> · Meetings, cited recall, Dictation, Autocomplete, daily summaries, and local privacy · <a href="web/assets/feature-demo.mp4">open the MP4 directly</a></sub>
+<sub><strong>30-second feature demo with voiceover</strong> · Cited recall, bot-free meeting capture, Dictation, Autocomplete, and verifiable local processing · <a href="web/assets/hero-demo.mp4">open the MP4 directly</a></sub>
 
 [Features](#features) · [How it works](#how-it-works) · [Privacy — verify it](#privacy--verify-it) · [Download](#download) · [FAQ](#faq) · [Build from source](#build-from-source)
 

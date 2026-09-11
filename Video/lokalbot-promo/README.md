@@ -1,8 +1,7 @@
 # LokalBot 30-second promo
 
-This is the canonical 16:9 source for the website hero video. The preserved
-`Video/hero-demo/` project remains the longer legacy showcase; derived square
-and vertical experiments are local working material.
+This is the canonical 16:9 source for the website and README hero video.
+Derived square and vertical experiments are local working material.
 
 ## Current cut
 
@@ -11,7 +10,7 @@ and vertical experiments are local working material.
 - six scenes: quiz, cited recall, bot-free capture, Dictation + Autocomplete,
   scoped network verification, and CTA
 - local Kokoro narration (`am_michael`) with burned-in captions
-- HyperFrames 0.8.4
+- HyperFrames 0.8.6
 
 The privacy scene deliberately demonstrates only the documented built-in path:
 models already downloaded, update checks off, and no approved remote backend in
@@ -40,5 +39,5 @@ Scripts/render-hero-video-short.sh
 ```
 
 That command validates the composition, renders the master, normalizes delivery
-audio, creates the poster and manifest, then atomically promotes the website and
-README MP4 aliases.
+audio, creates the poster and manifest, then atomically promotes the canonical
+website MP4.

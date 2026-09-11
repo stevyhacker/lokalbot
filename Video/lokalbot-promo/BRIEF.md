@@ -16,7 +16,7 @@ narration: yes
 
 A punchy 30-second promo engineered for clicks and downloads, posted to Show HN,
 Reddit, and X. Fresh concept and visuals by explicit instruction: ignore the
-existing hero-demo materials and scenarios entirely.
+prior gliding-screenshot feature-tour materials and scenarios entirely.
 
 Chosen concept (internal pitch round, autonomous): **"Pop quiz"** — the video
 opens by challenging the viewer's own memory of their workday ("What did you
@@ -30,7 +30,7 @@ direction deliberately left behind: the gliding-screenshots feature tour with a
 ## Assets
 
 None supplied. All visuals are original stylized UI vignettes built in HTML
-(no reuse of hero-demo screenshots or captures). No website scrape.
+(no reuse of prior screenshots or captures). No website scrape.
 
 ## Customizations
 
