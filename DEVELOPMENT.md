@@ -1,8 +1,32 @@
 # LokalBot — technical deep dive
 
-Everything the [README](README.md) summarizes, in full detail: subsystem internals, configuration, headless flags, testing, and the on-disk layout. For contributor-workflow ground rules (XcodeGen, schemes, pinned dependencies), see [CLAUDE.md](CLAUDE.md); for signing and publication, use [RELEASING.md](RELEASING.md).
+Everything the [README](README.md) summarizes, in full detail: build workflows, subsystem internals, configuration, headless flags, testing, and the on-disk layout. Shared contributor instructions live in [AGENTS.md](AGENTS.md); the data and network contract lives in [PRIVACY.md](PRIVACY.md). For signing and publication, use [RELEASING.md](RELEASING.md).
 
-Jump to [capture and processing](#recording--meeting-detection), [search and Ask](#search--player), [Today and Timeline](#day-tracking--today-timeline-and-ask), [Autocomplete and Dictation](#autocomplete-cotyping-engine), [Agent Mode](#agent-mode--an-embedded-coding-agent-on-your-selected-main-llm), [configuration](#configuration), [testing](#testing), or [storage](#on-disk-layout).
+Jump to [build workflows](#build-workflows), [capture and processing](#recording--meeting-detection), [search and Ask](#search--player), [Today and Timeline](#day-tracking--today-timeline-and-ask), [Autocomplete and Dictation](#autocomplete-cotyping-engine), [Agent Mode](#agent-mode--an-embedded-coding-agent-on-your-selected-main-llm), [configuration](#configuration), [testing](#testing), or [storage](#on-disk-layout).
+
+## Build workflows
+
+The Xcode project is generated from `project.yml`. Regenerate it after editing project configuration or adding/removing source files:
+
+```bash
+xcodegen generate
+```
+
+Use the **LokalBot Dev** scheme for local development. Build it with:
+
+```bash
+xcodebuild -project LokalBot.xcodeproj -scheme 'LokalBot Dev' -destination 'platform=macOS' build
+```
+
+The prod and Dev targets share sources, but have separate bundle identities (`me.dotenv.LokalBot` and `me.dotenv.LokalBot.dev`) and macOS permission grants. `LOKALBOT_DEV` disables Sparkle's launch path in every Dev configuration. The dedicated **LokalBot UI Test Host** also sets `LOKALBOT_UI_TEST_HOST` and removes the menu-bar extra for XCUITest. Unit tests use the **LokalBot** scheme; see [Testing](#testing).
+
+App Sandbox is intentionally disabled because Core Audio process taps do not work in the sandbox. Distribution uses Developer ID signing and notarization. When the user requests reinstallation of the installed app, use `Scripts/reinstall-preserve-permissions.sh` to validate signing identity and update it in place.
+
+The first build uses `Scripts/fetch-llama.sh` and `Scripts/fetch-sherpa.sh` to vendor native runtimes. Read their pins and the Swift package versions from the checked-in configuration rather than copying version numbers from prose. Preserve pins unless the requested work needs an update.
+
+The `lokalbot-cli` target shares `LokalBot/CLISupport/` and selected model files by direct source inclusion. It is built before the app and embedded in `Contents/Helpers/`; it is not a shared framework. `project.yml` separately copies `.agents/skills/lokalbot-cli/SKILL.md` into `Contents/Resources/lokalbot-cli/`. Keep that skill self-contained unless its packaging is also updated. `Scripts/build-mcpb.sh` packages the helper for GUI MCP clients.
+
+Unit tests are hosted inside the prod app binary and link `libllama` directly; `-bundle_loader` resolves host-defined symbols only. Generated `default.profraw` coverage files are gitignored and should not be committed. Signing keys and populated environment files must remain outside version control.
 
 ## Recording & meeting detection
 
@@ -167,7 +191,8 @@ The app binary doubles as a test harness; flows that need ungranted permissions 
   xcodebuild -project LokalBot.xcodeproj -scheme LokalBot -destination 'platform=macOS' test
   ```
   Pure-logic coverage — prompt sanitizers, search ranker, model fit, transcript merging, settings codecs, data migration, and the chat agent (tool-call parsing for JSON **and** native function-call forms, the ReAct loop, observation formatters).
-- **UI** (`LokalBotUITests`, XCUITest): run the hosted **UI Tests** workflow or another remote Mac runner. `Scripts/ui-tests.sh` is the CI/remote entry point. It drives a dedicated UI Test Host against a synthetic library under a temporary `LOKALBOT_STORAGE_ROOT`; `LOKALBOT_UI_TEST=1` skips side-effectful subsystems, so the suite never touches the installed production app.
+  Select an affected class or method with `-only-testing:LokalBotTests/CotypingTests` (replace the class with the relevant test).
+- **UI** (`LokalBotUITests`, XCUITest): run the hosted **UI Tests** workflow or another remote Mac runner. `Scripts/ui-tests.sh --remote` dispatches the suite; append a test name to select one test. Never use `--foreground` or run UI tests locally on this MacBook. The script checks that the relevant changes are committed and pushed so the remote runner tests the intended revision. It drives a dedicated UI Test Host against a synthetic library under a temporary `LOKALBOT_STORAGE_ROOT`; `LOKALBOT_UI_TEST=1` skips side-effectful subsystems, so the suite never touches the installed production app.
 - **Documentation captures:** `Scripts/capture-screenshots.sh --stills-only` builds the same isolated host, seeds synthetic data, and renders fixed-density PNGs in-process. This is a capture pass, not the XCUITest suite; see [Docs/screenshot-kit.md](Docs/screenshot-kit.md).
 - **End-to-end** (`Scripts/e2e.sh`): exercises real audio, CoreML transcription, the bundled llama-server, and SQLite via the headless flags; skips flows needing ungranted permissions.
 
