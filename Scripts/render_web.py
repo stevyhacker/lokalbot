@@ -128,7 +128,7 @@ def guide_structured_data(page: dict) -> str:
                 "headline": page["h1"],
                 "description": page["description"],
                 "datePublished": "2026-07-13",
-                "dateModified": "2026-07-13",
+                "dateModified": page.get("updated", "2026-07-13"),
                 "mainEntityOfPage": url,
                 "image": "https://www.lokalbot.com/assets/og-image.png",
                 "author": {
@@ -175,6 +175,8 @@ def render_guide_page(template: str, page: dict) -> str:
         "{{H1}}": page["h1"],
         "{{LEAD}}": page["lead"],
         "{{READ_TIME}}": page["read_time"],
+        "{{UPDATED_DATE}}": page.get("updated", "2026-07-13"),
+        "{{UPDATED_LABEL}}": page.get("updated_label", "July 13, 2026"),
         "{{BODY}}": page["body"].strip(),
         "{{FAQ_ITEMS}}": render_faq_items(page["faq"]),
         "{{RELATED_LINKS}}": render_related_links(page),
@@ -214,12 +216,13 @@ def render_sitemap() -> str:
         *(page["slug"] for page in PAGES),
     ]
     entries = []
+    updated = {guide["slug"]: guide.get("updated", "2026-07-13") for guide in GUIDES}
     for path in paths:
         url = f"https://www.lokalbot.com/{path}"
         entries.append(
             "  <url>\n"
             f"    <loc>{url}</loc>\n"
-            "    <lastmod>2026-07-13</lastmod>\n"
+            f"    <lastmod>{updated.get(path, '2026-07-13')}</lastmod>\n"
             "  </url>"
         )
     return (

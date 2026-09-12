@@ -70,9 +70,9 @@ The same private library connects four moves: **Remember** meetings and optional
 
 | | |
 | :--: | :--: |
-| <a href="Assets/screenshots/cotyping.png"><img src="Assets/screenshots/cotyping.png" alt="LokalBot Type showing the Autocomplete readiness check, in-app suggestion preview, and two-step rehearsal" width="440"></a><br>**Autocomplete** — rehearse locally, then enable Cotyping in almost any app | <a href="Assets/screenshots/models.png"><img src="Assets/screenshots/models.png" alt="LokalBot model settings showing the Transcribe, Think, and Autocomplete roles, recommended presets, and model storage" width="440"></a><br>**Model stack** — see readiness and change each local role in one place |
+| <a href="Assets/screenshots/cotyping.png"><img src="Assets/screenshots/cotyping.png" alt="LokalBot Type showing the Autocomplete readiness check, in-app suggestion preview, and two-step rehearsal" width="440"></a><br>**Autocomplete** — rehearse locally, then enable Cotyping in almost any app | <a href="Assets/screenshots/models.png"><img src="Assets/screenshots/models.png" alt="LokalBot 0.8.1 Models settings showing Active models, Downloaded, and Connections, with the Balanced local setup before model downloads" width="440"></a><br>**Model stack** — see readiness and change each local role in one place |
 
-<sub>Captured at Retina resolution from the real macOS UI with a synthetic demo library. Click any image for the full-resolution frame; no personal meeting or screen data is shown.</sub>
+<sub>Captured from the real macOS UI with synthetic demo data. Click any image for the full-resolution frame; no personal meeting or screen data is shown.</sub>
 
 ## Features
 
@@ -121,7 +121,7 @@ Power users: bring your own model (any GGUF, Ollama, an OpenAI-compatible server
 
 ### Example model stack and performance
 
-This measured higher-capacity example occupies about **12.4 GB** after every model below has been downloaded. It was tested on a **48 GB M4 Max MacBook Pro** using LokalBot's bundled llama.cpp runtime with full Metal offload. It is not the default preset: the current Recommended stack uses the smaller LFM2.5 1.2B model for Autocomplete.
+This measured higher-capacity example occupies about **12.4 GB** after every model below has been downloaded. It was tested on a **48 GB M4 Max MacBook Pro** using LokalBot's bundled llama.cpp runtime with full Metal offload. It is not the default preset: the current Balanced local stack uses Qwen3-ASR 1.7B for transcription and the smaller LFM2.5 1.2B model for Autocomplete.
 
 | Role | Model | Quantization / format | Model files | Measured generation |
 | --- | --- | --- | ---: | ---: |
@@ -212,7 +212,7 @@ Yes. Use the built-in llama.cpp runtime with any GGUF you download (there's a Hu
 <details>
 <summary>Is my screen being watched?</summary>
 
-Fresh installs select day tracking with text and encrypted visual context by default. Collection starts only after you grant macOS Accessibility and Screen Recording permissions, and you can turn off tracking or choose a less detailed mode at any time. Visuals are deleted after 14 days by default; a moment you explicitly save is retained until you unsave or delete it. Private/incognito windows, excluded apps and domains, and focused secure fields are skipped. Detected credentials are redacted and the associated pixels are dropped. No detector is perfect, so exclude any app or domain whose content should never be retained.
+Fresh installs select activity-only day tracking. Visible text and encrypted screenshots are opt-in and require the applicable macOS Accessibility and Screen Recording permissions. You can turn off tracking or change its detail at any time. Visuals are deleted after 14 days by default; a moment you explicitly save is retained until you unsave or delete it. Private/incognito windows, excluded apps and domains, and focused secure fields are skipped. Detected credentials are redacted and the associated pixels are dropped. No detector is perfect, so exclude any app or domain whose content should never be retained.
 </details>
 
 <details>

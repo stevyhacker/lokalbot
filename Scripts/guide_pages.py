@@ -50,6 +50,8 @@ GUIDES = [
     },
     {
         "slug": "offline-meeting-transcription-mac",
+        "updated": "2026-09-12",
+        "updated_label": "September 12, 2026",
         "title": "Offline Meeting Transcription on Mac",
         "description": "Set up offline meeting transcription on Apple Silicon with local speech models, two-track audio, timestamps, and no cloud upload.",
         "eyebrow": "Offline transcription",
@@ -64,10 +66,10 @@ GUIDES = [
         <h2>Choose the speech engine for the job</h2>
         <p>There is no universal best local model. LokalBot exposes several engines because language coverage, speed, timestamps, and hard-audio accuracy pull in different directions.</p>
         <ul>
-          <li><strong>IBM Granite Speech 4.1 2B</strong> is the recommended high-accuracy default.</li>
+          <li><strong>IBM Granite Speech 4.1 2B</strong> is another local speech-recognition option.</li>
           <li><strong>Parakeet TDT 0.6B v3</strong> is the fast multilingual option, covering 25 languages and measuring around 190× realtime in the project's benchmark.</li>
           <li><strong>Parakeet v2</strong> focuses on English and can be useful when recall matters more than broad language coverage.</li>
-          <li><strong>Qwen3-ASR 1.7B</strong> covers 52 languages and dialects and is the heavier Qwen tier for difficult recordings; its download is about 3.2 GB.</li>
+          <li><strong>Qwen3-ASR 1.7B</strong> is the default in LokalBot 0.8.1, covers 52 languages and dialects, and downloads about 3.2 GB.</li>
           <li><strong>Qwen3-ASR 0.6B</strong> provides a compact global-coverage option at roughly 0.7 GB.</li>
           <li><strong>Whisper large-v3 turbo</strong> covers 99 languages, supports word timestamps, and is a useful wide-language fallback at roughly 1.6 GB.</li>
         </ul>
@@ -189,6 +191,8 @@ GUIDES = [
     },
     {
         "slug": "local-transcription-models-mac",
+        "updated": "2026-09-12",
+        "updated_label": "September 12, 2026",
         "title": "Local Transcription Models for Mac: A Guide",
         "description": "Compare Granite Speech, Parakeet, Qwen3-ASR, and Whisper for private on-device meeting transcription on Apple Silicon.",
         "eyebrow": "Model guide",
@@ -203,10 +207,10 @@ GUIDES = [
           <table class="guide-table">
             <thead><tr><th>Model</th><th>Best fit</th><th>Coverage / size</th></tr></thead>
             <tbody>
-              <tr><td>IBM Granite Speech 4.1 2B</td><td>Recommended accuracy default</td><td>Local llama.cpp speech model</td></tr>
+              <tr><td>IBM Granite Speech 4.1 2B</td><td>Alternative local speech engine</td><td>Local llama.cpp speech model</td></tr>
               <tr><td>Parakeet TDT 0.6B v3</td><td>Very fast multilingual meetings</td><td>25 languages; ~190× realtime in project benchmarks</td></tr>
               <tr><td>Parakeet TDT 0.6B v2</td><td>English-focused recall</td><td>English only</td></tr>
-              <tr><td>Qwen3-ASR 1.7B</td><td>Harder multilingual audio</td><td>52 languages/dialects; ~3.2 GB</td></tr>
+              <tr><td>Qwen3-ASR 1.7B</td><td>Default in LokalBot 0.8.1</td><td>52 languages/dialects; ~3.2 GB</td></tr>
               <tr><td>Qwen3-ASR 0.6B</td><td>Compact broad coverage</td><td>Global coverage; ~0.7 GB</td></tr>
               <tr><td>Whisper large-v3 turbo</td><td>Wide-language fallback and timestamps</td><td>99 languages; ~1.6 GB</td></tr>
             </tbody>
@@ -215,10 +219,10 @@ GUIDES = [
 
         <h2>A sensible selection strategy</h2>
         <ol>
-          <li><strong>Start with Granite</strong> when you want the project's recommended general-accuracy choice.</li>
+          <li><strong>Start with Qwen3-ASR 1.7B</strong> for the default speech model in LokalBot 0.8.1.</li>
           <li><strong>Choose Parakeet v3</strong> when throughput and its 25 supported languages cover your meetings.</li>
           <li><strong>Keep Whisper installed</strong> if you need broader language coverage or word timestamps.</li>
-          <li><strong>Try Qwen3-ASR 1.7B</strong> on difficult multilingual recordings where the compact engines miss too much.</li>
+          <li><strong>Compare Granite Speech</strong> as another local option on the recordings that matter to you.</li>
           <li><strong>Compare on your audio.</strong> A two-minute representative clip is more informative than a generic benchmark.</li>
         </ol>
 
@@ -238,7 +242,7 @@ GUIDES = [
         </ul>
         """,
         "faq": [
-            ("Which model does LokalBot recommend?", "IBM Granite Speech 4.1 2B is the current recommended accuracy default in the project documentation."),
+            ("Which model does LokalBot recommend?", "Qwen3-ASR 1.7B is the default transcription model in LokalBot 0.8.1. You can change it in Settings → Models."),
             ("Which option covers the most languages?", "Whisper large-v3 turbo has the broadest listed coverage at 99 languages. Language count alone does not guarantee the best result for a specific recording."),
             ("Can I keep several models installed?", "Yes. That is useful when your meetings vary by language or audio quality, subject to disk space."),
         ],
